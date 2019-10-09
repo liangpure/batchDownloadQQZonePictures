@@ -1,0 +1,11 @@
+{
+  "name": "batchDownloadQQZonePictures",
+  "version": "0.1.0",
+  "description": "batch download my qq zone pictures",
+  "main": "index.js",
+  "author": "liangpure",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "^1.20.0"
+  }
+}
