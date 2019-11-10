@@ -1,19 +1,34 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
+const log4js = require('log4js');
+
+
+log4js.configure({
+  appenders: { cheese: { type: 'file', filename: 'cheese.log' } },
+  categories: { default: { appenders: ['cheese'], level: 'debug' } }
+});
+
+const logger = log4js.getLogger('cheese');
+const loggerConsole = log4js.getLogger();
+loggerConsole.level = 'debug'
+
 
 async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   return await pageHandle.evaluate((obj, attrName) => {
+    if (attrName.indexOf('&&') > 0) {
+      return attrName.split('&&').map((attr) => obj.getAttribute(attr)).join('&&');
+    }
     return obj.getAttribute(attrName);
   }, elemHandle, attrName);
 }
 
 
 (async () => {
-  const browser = await puppeteer.launch({headless: false, slowMo: 250});
+  const browser = await puppeteer.launch({headless: true, slowMo: 250});
   const page = await browser.newPage();
   // 允许命令行直接输入QQ号 TODO TODO
-  await page.goto('https://user.qzone.qq.com/644276847');
+  await page.goto('https://user.qzone.qq.com/1475099525');
   // 需要先在电脑上登录QQ
   // 等待iframe加载完毕
   const frame = await page.frames().find(f => f.name() === 'login_frame');
@@ -26,7 +41,6 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   });
   await page.waitForSelector("a[title='相册']");
   await page.click('a[title="相册"]');
-  
   // 进入相册页面等待加载完成
   await page.waitFor(1000);
   await page.waitForSelector('#tphoto');
@@ -35,6 +49,29 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
     const identity = f.name();
     return identity === 'app_canvas_frame' || identity === 'tphoto';
   });
+  // 页面滚动到底部 加载相册
+  // await page.evaluate(_ => {
+  //   window.scrollBy(0, window.innerHeight);
+  // });
+  await page.evaluate(() => {
+    return new Promise((resolve, reject) => {
+        let totalHeight = 0;
+        let distance = 400;
+        let timer = setInterval(() => {
+            let scrollHeight = document.body.scrollHeight;
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+            console.log('totalHeight, ', totalHeight, ' scrollHeight ', scrollHeight)
+            if(totalHeight >= scrollHeight){
+                clearInterval(timer);
+                resolve();
+            }
+        }, 500);
+    });
+  });
+  
+
+  await page.waitFor(500);
   // console.log(await page.frames());
   await photoFrame.waitForSelector('.js-album-list-ul');
   // console.log(photoFrame);
@@ -44,13 +81,14 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   let albums = Array.from(albumEles);
   for (let i = 0; i < albums.length; i++) {
     const elementHandle = albums[i];
-    const name = await getAttributeByElem(photoFrame, elementHandle, 'data-name');
-    const pictureNum = Number(await getAttributeByElem(photoFrame, elementHandle, 'data-total'));
-    const dataId = await getAttributeByElem(photoFrame, elementHandle, 'data-id');
+    const result = await getAttributeByElem(photoFrame, elementHandle, 'data-name&&data-id&&data-total');
+    const [name, dataId, pictureNum] = result.split('&&');
+    // const pictureNum = Number(await getAttributeByElem(photoFrame, elementHandle, 'data-total'));
+    // const dataId = await getAttributeByElem(photoFrame, elementHandle, 'data-id');
     albumList.push({
       name,
       dataId,
-      pictureNum,
+      pictureNum: Number(pictureNum),
     })
   }
 
@@ -61,28 +99,23 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
     await elementHandle.click();
     // await albumInfo.elementHandle.click();
     await photoFrame.waitForSelector('.list.j-pl-photolist-ul');
-    // 页面滚动到底部 加载所有图片
-    await page.evaluate(_ => {
-      window.scrollBy(0, window.innerHeight);
-    });
-    await page.waitFor(1000);
 
-    let pictureElems = await photoFrame.$$('.mod-photo-list li.j-pl-photoitem>div');
-    // console.log(pictureElems);
-    let pictures = Array.from(pictureElems);
-    const pictureList = [];
-    for (let j = 0; j < pictures.length; j++) {
-      const picElemHandle = pictures[j];
-      const titleSpanElem = await picElemHandle.$('.item-tit>span');
-      const name = await getAttributeByElem(photoFrame, titleSpanElem, 'title');
-      pictureList.push({
-        name,
-        albumName: albumInfo.name,
-        elementHandle: picElemHandle,
-        order: j,
-        isLastOne: j === (pictures.length - 1)
-      })
-    }
+    // let pictureElems = await photoFrame.$$('.mod-photo-list li.j-pl-photoitem>div');
+    // // console.log(pictureElems);
+    // let pictures = Array.from(pictureElems);
+    // const pictureList = [];
+    // for (let j = 0; j < pictures.length; j++) {
+    //   const picElemHandle = pictures[j];
+    //   const titleSpanElem = await picElemHandle.$('.item-tit>span');
+    //   const name = await getAttributeByElem(photoFrame, titleSpanElem, 'title');
+    //   pictureList.push({
+    //     name,
+    //     albumName: albumInfo.name,
+    //     elementHandle: picElemHandle,
+    //     order: j,
+    //     isLastOne: j === (pictures.length - 1)
+    //   })
+    // }
     
     // 下载图片
     const loadPicture = async (picInfo) => {
@@ -97,6 +130,9 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
           img.addEventListener('error', reject);
         })
       }, imgWrapElem);
+      // 取得图片名称
+      const imgName = await page.$eval('#js-photo-name', (el) => el.innerText);
+
       const imgUrl = await getAttributeByElem(page, imgWrapElem, 'src');
       
       const tempPage = await browser.newPage();
@@ -110,24 +146,35 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
         await fsPromises.mkdir(albumPath, { recursive: true });
       }
       
-      fs.writeFile(`${albumPath}/${picInfo.name}-${picInfo.order}.${contentType}`, await viewSource.buffer(), function(err) {
+      fs.writeFile(`${albumPath}/${imgName}@${picInfo.order}.${contentType}`, await viewSource.buffer(), function(err) {
         tempPage.close();
         if(err) {
             return console.log(err);
         }
-        console.log("The file was saved!");
+        const info = `${albumInfo.name}第${picInfo.order+1}张图片已经被保存`;
+        loggerConsole.info(info)
+        logger.info(info);
       });
       // 悬浮在元素上 然后点击下一张
       await page.hover('#js-image-ctn');
       await page.waitFor(200);
       if (!picInfo.isLastOne) await page.click('#js-btn-nextPhoto');
     }
+    let pictureElem = await photoFrame.$('.mod-photo-list li.j-pl-photoitem>div');
     // 点击第一个图片 弹出显示照片的框
-    await pictureList[0].elementHandle.click();
+    await pictureElem.click();
     // await page.waitFor(1000);
-    for (let i = 0; i < pictureList.length; i++) {
-      const picInfo = pictureList[i];
-      await loadPicture(picInfo)
+    for (let i = 0; i < albumInfo.pictureNum; i++) {
+      try {
+        await loadPicture({
+          order: i,
+          albumName: albumInfo.name,
+          isLastOne: i === (albumInfo.pictureNum - 1)
+        })
+      } catch(err) {
+        console.error(err);
+        logger.trace(`相册${albumInfo.name}第${i+1}张图片下载失败`);
+      }
     }
     // 当前相册下载完毕以后，退出当前相册
     await page.$('.photo_layer_close').then((handle) => handle.click('.photo_layer_close'));
@@ -137,7 +184,20 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   for (let i = 0; i < albumList.length; i++) {
     const albumInfo = albumList[i];
     if (albumInfo.pictureNum > 0) {
-      await savePicturesToLocal(albumInfo)
+      try {
+        await savePicturesToLocal(albumInfo);
+      } catch(err) {
+        console.error(err);
+        logger.trace(`相册${albumInfo.name}下载失败`);
+        // 当前相册下载完毕以后，退出当前相册
+        try {
+          await page.$('.photo_layer_close').then((handle) => handle.click('.photo_layer_close'));
+        } catch(err) {
+          console.error(err);
+        }
+        await photoFrame.click('li[data-mod="albumlist"]');
+        await photoFrame.waitForSelector('.js-album-list');
+      }
     }
   }
 
