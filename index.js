@@ -77,7 +77,7 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   // console.log(photoFrame);
   const albumList = [];
   let albumEles = await photoFrame.$$('.album-list .js-album-list-ul>li>div');
-  // 获取相册列表，目前还没考虑相册翻页的情况... TODO TODO
+  // 获取相册列表，目前还没考虑相册列表有分页的情况... TODO TODO
   let albums = Array.from(albumEles);
   for (let i = 0; i < albums.length; i++) {
     const elementHandle = albums[i];
@@ -117,49 +117,7 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
     //   })
     // }
     
-    // 下载图片
-    const loadPicture = async (picInfo) => {
-      // 展示大图 没有在iframe里面应该在page里面
-      await page.waitForSelector('#js-image-ctn');
-      const imgWrapElem = await page.$('#js-image-ctn>img');
-      // 等待图片加载完成
-      await page.evaluate((img) => {
-        if (img.complete) return;
-        return new Promise((resolve, reject) => {
-          img.addEventListener('load', resolve);
-          img.addEventListener('error', reject);
-        })
-      }, imgWrapElem);
-      // 取得图片名称
-      const imgName = await page.$eval('#js-photo-name', (el) => el.innerText);
-
-      const imgUrl = await getAttributeByElem(page, imgWrapElem, 'src');
-      
-      const tempPage = await browser.newPage();
-      const viewSource = await tempPage.goto(imgUrl);
-      const headers = viewSource.headers();
-      let contentType = headers['content-type'].split('/')[1];
-      if (contentType === 'webp') contentType = 'jpg';
-      await page.waitFor(1000);
-      const albumPath = `./out/${picInfo.albumName}`;
-      if(!fs.existsSync(albumPath)) {
-        await fsPromises.mkdir(albumPath, { recursive: true });
-      }
-      
-      fs.writeFile(`${albumPath}/${imgName}@${picInfo.order}.${contentType}`, await viewSource.buffer(), function(err) {
-        tempPage.close();
-        if(err) {
-            return console.log(err);
-        }
-        const info = `${albumInfo.name}第${picInfo.order+1}张图片已经被保存`;
-        loggerConsole.info(info)
-        logger.info(info);
-      });
-      // 悬浮在元素上 然后点击下一张
-      await page.hover('#js-image-ctn');
-      await page.waitFor(200);
-      if (!picInfo.isLastOne) await page.click('#js-btn-nextPhoto');
-    }
+  
     let pictureElem = await photoFrame.$('.mod-photo-list li.j-pl-photoitem>div');
     // 点击第一个图片 弹出显示照片的框
     await pictureElem.click();
@@ -181,22 +139,105 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
     await photoFrame.click('li[data-mod="albumlist"]');
     await photoFrame.waitForSelector('.js-album-list');
   }
+
+  // goInAlbum
+  // downloadTheAlbumPictures
+  // ifFailedTryAgain
+  async function goInAlbum(albumInfo) {
+    // todo 移除掉之前生成的文件
+    const elementHandle = await photoFrame.$(`div[data-id="${albumInfo.dataId}"]`);
+    await elementHandle.click();
+    // await albumInfo.elementHandle.click();
+    await photoFrame.waitForSelector('.list.j-pl-photolist-ul');
+    let pictureElem = await photoFrame.$('.mod-photo-list li.j-pl-photoitem>div');
+    // 点击第一个图片 弹出显示照片的框
+    await pictureElem.click();
+  }
+  async function loadPicture(picInfo) {
+    // 展示大图 没有在iframe里面应该在page里面
+    await page.waitForSelector('#js-image-ctn');
+    const imgWrapElem = await page.$('#js-image-ctn>img');
+    // 等待图片加载完成
+    await page.evaluate((img) => {
+      if (img.complete) return;
+      return new Promise((resolve, reject) => {
+        img.addEventListener('load', resolve);
+        img.addEventListener('error', reject);
+      })
+    }, imgWrapElem);
+    // 取得图片名称
+    const imgName = await page.$eval('#js-photo-name', (el) => el.innerText);
+
+    const imgUrl = await getAttributeByElem(page, imgWrapElem, 'src');
+    
+    const tempPage = await browser.newPage();
+    const viewSource = await tempPage.goto(imgUrl);
+    const headers = viewSource.headers();
+    let contentType = headers['content-type'].split('/')[1];
+    if (contentType === 'webp') contentType = 'jpg';
+    await page.waitFor(1000);
+    const albumPath = `./out/${picInfo.albumName}`;
+    if(!fs.existsSync(albumPath)) {
+      await fsPromises.mkdir(albumPath, { recursive: true });
+    }
+    
+    fs.writeFile(`${albumPath}/${imgName}@${picInfo.order}.${contentType}`, await viewSource.buffer(), function(err) {
+      tempPage.close();
+      if(err) {
+          return console.log(err);
+      }
+      const info = `${albumInfo.name}第${picInfo.order+1}张图片已经被保存`;
+      loggerConsole.info(info)
+      logger.info(info);
+    });
+  }
+  async function downloadTheAlbumPictures(albumInfo) {
+    // 下载图片
+    for (let i = 0; i < albumInfo.pictureNum; i++) {
+      try {
+        await loadPicture({
+          order: i,
+          albumName: albumInfo.name,
+        })
+        // 
+        // 悬浮在元素上 然后点击下一张
+        await page.hover('#js-image-ctn');
+        await page.waitFor(200);
+        if (i === (albumInfo.pictureNum - 1)) await page.click('#js-btn-nextPhoto');
+      } catch(err) {
+        console.error(err);
+        logger.trace(`相册${albumInfo.name}第${i+1}张图片下载失败`);
+      }
+    }
+  }
+  async function getOutAlbum() {
+    // 当前相册下载完毕以后，退出当前相册
+    try {
+      await page.$('.photo_layer_close').then((handle) => handle.click('.photo_layer_close'));
+    } catch (err) {
+      console.error(err);
+    }
+    await photoFrame.click('li[data-mod="albumlist"]');
+    await photoFrame.waitForSelector('.js-album-list');
+  }
   for (let i = 0; i < albumList.length; i++) {
     const albumInfo = albumList[i];
     if (albumInfo.pictureNum > 0) {
       try {
-        await savePicturesToLocal(albumInfo);
+        await goInAlbum(albumInfo);
+        await downloadTheAlbumPictures(albumInfo);
+        await getOutAlbum();
       } catch(err) {
         console.error(err);
         logger.trace(`相册${albumInfo.name}下载失败`);
         // 当前相册下载完毕以后，退出当前相册
-        try {
-          await page.$('.photo_layer_close').then((handle) => handle.click('.photo_layer_close'));
-        } catch(err) {
-          console.error(err);
-        }
-        await photoFrame.click('li[data-mod="albumlist"]');
-        await photoFrame.waitForSelector('.js-album-list');
+        // try {
+        //   await page.$('.photo_layer_close').then((handle) => handle.click('.photo_layer_close'));
+        // } catch(err) {
+        //   console.error(err);
+        // }
+        // await photoFrame.click('li[data-mod="albumlist"]');
+        // await photoFrame.waitForSelector('.js-album-list');
       }
     }
   }
