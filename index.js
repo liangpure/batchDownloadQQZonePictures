@@ -3,6 +3,22 @@ const fs = require('fs');
 const fsPromises = require('fs').promises;
 const log4js = require('log4js');
 
+function getArgvObj() {
+  const argv = process.argv.slice(2);
+  const obj = {};
+  function isNotOpt(arg) {
+    return !/--\w+/.test(arg)
+  }
+  for (let i = 0; i < argv.length; i++) {
+    switch(argv[i]) {
+      case '--user': obj.user = isNotOpt(argv[i + 1]) ? argv[++i] : null; break;
+      case '--other': obj.other = isNotOpt(argv[i + 1]) ? argv[++i] : null;break;
+    }
+  }
+  return obj;
+}
+const argvObj = getArgvObj();
+if(!argvObj.user) console.error('--user arg is needed.');
 
 log4js.configure({
   appenders: { cheese: { type: 'file', filename: 'cheese.log' } },
@@ -27,7 +43,8 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   const browser = await puppeteer.launch({headless: false, slowMo: 250});
   const page = await browser.newPage();
   // 允许命令行直接输入QQ号 TODO TODO
-  await page.goto('https://user.qzone.qq.com/644276847');
+  await page.goto(`https://user.qzone.qq.com/${argvObj.user}`);
+
   // 需要先在电脑上登录QQ
   // 等待iframe加载完毕
   const frame = await page.frames().find(f => f.name() === 'login_frame');
@@ -35,16 +52,37 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
   // 点击自动登录
   await frame.click('#qlogin_list>a', { delay: 3 });
   // 进入空间
-  await page.waitForNavigation({
-    waitUntil: 'domcontentloaded'
-  });
+  // await page.waitForNavigation({
+  //   waitUntil: 'domcontentloaded'
+  // });
+  await page.waitFor(1000);
+  // 如果需要下载其他人空间的照片需要设置其他人的QQ号
+  if (argvObj.other) {
+    await page.goto(`https://user.qzone.qq.com/${argvObj.other}`);
+    await page.waitFor(1000);
+    // 有可能出现空间因为flash插件没有直接显示的情况
+    try{
+      await page.click('#welcomeflash', { clickCount: 2, delay: 2 });
+      await page.waitForSelector('.fs-guide-overlay', { timeout: 3000 })
+      await page.click('.btn-fs-sure');
+    } catch(err) {
+      // 如果捕获到错误说明是正常进入空间的
+      console.info(err);
+    }
+  }
   // 进入相册列表页面
   let photoFrame;
   async function getInAlbumsListPage() {
-    await page.waitForSelector(".homepage-link");
-    await page.hover("a.homepage-link")
-    await page.waitForSelector('.nav-drop-down');
-    await page.click('i.icon-album');
+    try {
+      await page.waitForSelector(".homepage-link");
+      await page.hover("a.homepage-link")
+      await page.waitForSelector('.nav-drop-down');
+      await page.click('i.icon-album');
+    } catch(err) {
+      await page.waitForSelector("a[title='相册']");
+      await page.click('a[title="相册"]');
+      console.error(err);
+    }
     // 进入相册页面等待加载完成
     await page.waitFor(1000);
     await page.waitForSelector('#tphoto');
