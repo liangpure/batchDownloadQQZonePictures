@@ -21,7 +21,7 @@ const argvObj = getArgvObj();
 if(!argvObj.user) console.error('--user arg is needed.');
 
 log4js.configure({
-  appenders: { cheese: { type: 'file', filename: 'cheese.log' } },
+  appenders: { cheese: { type: 'file', filename: 'download.log' } },
   categories: { default: { appenders: ['cheese'], level: 'debug' } }
 });
 
@@ -157,7 +157,7 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
         })
       } catch(err) {
         console.error(err);
-        logger.info(`相册${albumInfo.name}第${i+1}张图片下载失败`);
+        logger.info(`No ${i} failed.`);
       }
     }
     // 当前相册下载完毕以后，退出当前相册
@@ -232,7 +232,7 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
         if (i !== (albumInfo.pictureNum - 1)) await page.click('#js-btn-nextPhoto');
       } catch(err) {
         console.error(err);
-        logger.info(`相册${albumInfo.name}第${i+1}张图片下载失败`);
+        logger.info(`No ${i} failed.`);
       }
     }
   }
@@ -246,12 +246,14 @@ async function getAttributeByElem(pageHandle, elemHandle, attrName) {
     const albumInfo = albumList[i];
     if (albumInfo.pictureNum > 0) {
       try {
+        logger.info(`--album ${albumInfo.name} download start.`);
         await goInAlbum(albumInfo);
         await downloadTheAlbumPictures(albumInfo);
         await getOutAlbum();
+        logger.info(`--album ${albumInfo.name} download end.`);
       } catch(err) {
         console.error(err);
-        logger.info(`相册${albumInfo.name}下载失败`);
+        logger.info(`--album ${albumInfo.name} download failed.`);
         // 如果之前一个相册下载失败，重新进入相册页面
         await getInAlbumsListPage();
       }
